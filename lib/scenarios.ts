@@ -85,6 +85,8 @@ export const SCENARIOS: Scenario[] = [
     entities: [
       { id: "wind", type: "wind", label: "바람" },
       { id: "mark", type: "mark", label: "1번 마크" },
+      { id: "lay_s", type: "line", label: "스타보드 레이라인", lineStyle: "layline" },
+      { id: "lay_p", type: "line", label: "포트 레이라인", lineStyle: "layline" },
       { id: "us", type: "boat", label: "US", color: HERO, hero: true },
       { id: "r", type: "boat", label: "R", color: RIVAL },
     ],
@@ -93,10 +95,12 @@ export const SCENARIOS: Scenario[] = [
         id: "f1",
         title: "레이라인 접근 — 오버스탠딩 금물",
         description:
-          "마크 우측에서 뻗는 스타보드 레이라인. 너무 일찍 레이라인에 붙으면(오버스탠딩) 거리 손해 + 위에서 누르는 보트에 취약하다. 레이라인 아래에서 여유를 두고 접근한다.",
+          "마크에서 양쪽으로 뻗는 레이라인(점선). 너무 일찍 레이라인에 붙으면(오버스탠딩) 거리 손해 + 위에서 누르는 보트에 취약하다. 레이라인 아래에서 여유를 두고 접근한다.",
         states: {
           wind: { x: 50, y: 6, rotation: 180, visible: true },
           mark: { x: 52, y: 22, visible: true },
+          lay_s: { x: 52, y: 22, x2: 18, y2: 66, visible: true },
+          lay_p: { x: 52, y: 22, x2: 86, y2: 66, visible: true },
           us: { x: 30, y: 70, rotation: 45, visible: true },
           r: { x: 44, y: 78, rotation: 45, visible: true },
         },
@@ -129,6 +133,8 @@ export const SCENARIOS: Scenario[] = [
         states: {
           us: { x: 60, y: 26, rotation: 130 },
           r: { x: 50, y: 34, rotation: 60 },
+          lay_s: { x: 52, y: 22, x2: 18, y2: 66, visible: false },
+          lay_p: { x: 52, y: 22, x2: 86, y2: 66, visible: false },
         },
       },
       {

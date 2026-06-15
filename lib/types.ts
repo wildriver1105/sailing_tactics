@@ -4,23 +4,33 @@ export type EntityType =
   | "committee" // 본부선 (시작선 우측)
   | "pin" // 핀 엔드 (시작선 좌측)
   | "wind" // 바람 화살표
-  | "note"; // 텍스트 라벨
+  | "note" // 텍스트 라벨
+  | "line"; // 레이라인 / 구분선 / 오버랩 등
+
+/** 라인 종류별 시각 스타일 */
+export type LineStyle = "layline" | "divider" | "overlap" | "plain";
 
 export interface Entity {
   id: string;
   type: EntityType;
   label?: string;
-  /** 보트/노트 색상. 미지정 시 타입별 기본값 사용 */
+  /** 보트/노트/라인 색상. 미지정 시 타입별 기본값 사용 */
   color?: string;
   /** 우리 팀 보트 여부 (하이라이트) */
   hero?: boolean;
+  /** type === "line" 일 때의 스타일 */
+  lineStyle?: LineStyle;
 }
 
 export interface EntityState {
-  /** 0..100, 보드 너비 기준 퍼센트 */
+  /** 0..100, 보드 너비 기준 퍼센트. 라인의 경우 끝점 A */
   x: number;
-  /** 0..100, 보드 높이 기준 퍼센트 */
+  /** 0..100, 보드 높이 기준 퍼센트. 라인의 경우 끝점 A */
   y: number;
+  /** 라인 끝점 B (x). type === "line" 전용 */
+  x2?: number;
+  /** 라인 끝점 B (y). type === "line" 전용 */
+  y2?: number;
   /** 회전각(도). 0 = 뱃머리가 위(북)를 향함, 시계방향 + */
   rotation?: number;
   /** 표시 여부. 기본 true */
