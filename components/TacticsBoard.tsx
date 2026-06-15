@@ -167,7 +167,11 @@ export default function TacticsBoard() {
     const cur = states[id] ?? { x: 50, y: 50 };
     const p = pointerToPercent(e.clientX, e.clientY);
     dragRef.current = { id, offX: p.x - cur.x, offY: p.y - cur.y };
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    try {
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {
+      /* 활성 포인터가 없는 환경에서는 무시 */
+    }
   };
 
   const onBoardPointerMove = (e: React.PointerEvent) => {
@@ -404,6 +408,7 @@ export default function TacticsBoard() {
               return (
                 <motion.div
                   key={en.id}
+                  data-entity-id={en.id}
                   initial={false}
                   animate={{
                     x,
@@ -414,6 +419,10 @@ export default function TacticsBoard() {
                   }}
                   transition={dragging ? { duration: 0 } : MOVE_TRANSITION}
                   onPointerDown={(e) => onEntityPointerDown(e, en.id)}
+                  onClick={(e) => {
+                    // 편집 모드: 말 클릭이 보드로 전파돼 선택이 풀리는 것을 막음
+                    if (editMode) e.stopPropagation();
+                  }}
                   style={{
                     position: "absolute",
                     top: 0,
