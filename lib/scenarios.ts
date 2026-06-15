@@ -85,8 +85,8 @@ export const SCENARIOS: Scenario[] = [
     entities: [
       { id: "wind", type: "wind", label: "바람" },
       { id: "mark", type: "mark", label: "1번 마크" },
-      { id: "lay_s", type: "line", label: "스타보드 레이라인", lineStyle: "layline" },
-      { id: "lay_p", type: "line", label: "포트 레이라인", lineStyle: "layline" },
+      { id: "lay_s", type: "line", label: "스타보드 레이라인", lineStyle: "divider" },
+      { id: "lay_p", type: "line", label: "포트 레이라인", lineStyle: "divider" },
       { id: "us", type: "boat", label: "US", color: HERO, hero: true },
       { id: "r", type: "boat", label: "R", color: RIVAL },
     ],

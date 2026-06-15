@@ -29,14 +29,15 @@ const LINE_STYLES: Record<
   LineStyle,
   { color: string; dash: string; width: number; arrow: "none" | "end" | "both"; ko: string }
 > = {
-  layline: { color: "#9fe1ff", dash: "9 7", width: 2, arrow: "none", ko: "레이라인" },
+  solid: { color: "#eaf3ec", dash: "0", width: 2, arrow: "none", ko: "실선" },
   divider: { color: "#ffd54a", dash: "2 8", width: 2, arrow: "none", ko: "구분선" },
-  overlap: { color: "#9be7b0", dash: "0", width: 2.5, arrow: "both", ko: "오버랩" },
-  plain: { color: "#eaf3ec", dash: "0", width: 2, arrow: "end", ko: "화살표/라인" },
+  arrow: { color: "#eaf3ec", dash: "0", width: 2, arrow: "end", ko: "일방향 화살표" },
+  darrow: { color: "#9be7b0", dash: "0", width: 2.5, arrow: "both", ko: "양방향 화살표" },
 };
 
 function lineCfg(en: Entity) {
-  const base = LINE_STYLES[en.lineStyle ?? "plain"];
+  // 알 수 없는(예전) 스타일 키는 실선으로 폴백
+  const base = LINE_STYLES[en.lineStyle as LineStyle] ?? LINE_STYLES.solid;
   return { ...base, color: en.color ?? base.color };
 }
 
@@ -72,6 +73,15 @@ export default function TacticsBoard() {
   const [scenarios, setScenarios] = useState<Scenario[]>(() =>
     deepClone(SCENARIOS)
   );
+  // 항상 최신 scenarios를 가리키는 ref (히스토리 스냅샷용)
+  const scenariosRef = useRef(scenarios);
+  scenariosRef.current = scenarios;
+  // Undo/Redo 히스토리 (각 항목 = scenarios 전체 스냅샷)
+  const [past, setPast] = useState<Scenario[][]>([]);
+  const [future, setFuture] = useState<Scenario[][]>([]);
+  const coalescingRef = useRef(false); // 드래그/타이핑 중 한 단계로 묶기
+  const coalesceCommittedRef = useRef(false);
+
   const [scenarioId, setScenarioId] = useState<string>(SCENARIOS[0].id);
   const [frameIndex, setFrameIndex] = useState(0);
   const [editMode, setEditMode] = useState(false);
@@ -189,6 +199,20 @@ export default function TacticsBoard() {
         }
         return;
       }
+      // 편집 모드: Cmd/Ctrl+Z = Undo, Cmd/Ctrl+Shift+Z 또는 Ctrl+Y = Redo
+      if (editMode && (e.metaKey || e.ctrlKey)) {
+        const key = e.key.toLowerCase();
+        if (key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          undo();
+          return;
+        }
+        if ((key === "z" && e.shiftKey) || key === "y") {
+          e.preventDefault();
+          redo();
+          return;
+        }
+      }
       // 편집 모드 + 선택 있음 + Backspace/Delete → 삭제 확인
       if (
         editMode &&
@@ -212,15 +236,17 @@ export default function TacticsBoard() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [go, editMode, drawStyle, confirmOpen, selectedIds, tool]);
+  }, [go, editMode, drawStyle, confirmOpen, selectedIds, tool, past, future]);
 
-  // 시나리오 변경 시 프레임 초기화
+  // 시나리오 변경 시 프레임·히스토리 초기화
   useEffect(() => {
     setFrameIndex(0);
     setSelectedIds([]);
     setConfirmOpen(false);
     setDrawStyle(null);
     setDraft(null);
+    setPast([]);
+    setFuture([]);
   }, [scenarioId]);
 
   // 주석 모두 지우기
@@ -295,9 +321,53 @@ export default function TacticsBoard() {
     };
   };
 
+  // ── Undo / Redo 히스토리 ─────────────────────────────────
+  const HISTORY_LIMIT = 60;
+  // 변경 직전 스냅샷을 past에 적재. 연속 동작(드래그/타이핑)은 한 번만.
+  const recordHistory = () => {
+    if (coalescingRef.current) {
+      if (coalesceCommittedRef.current) return;
+      coalesceCommittedRef.current = true;
+    }
+    const snap = deepClone(scenariosRef.current);
+    setPast((p) => {
+      const next = [...p, snap];
+      return next.length > HISTORY_LIMIT
+        ? next.slice(next.length - HISTORY_LIMIT)
+        : next;
+    });
+    setFuture([]);
+  };
+  const beginCoalesce = () => {
+    coalescingRef.current = true;
+    coalesceCommittedRef.current = false;
+  };
+  const endCoalesce = () => {
+    coalescingRef.current = false;
+    coalesceCommittedRef.current = false;
+  };
+  const undo = () => {
+    if (!past.length) return;
+    const prev = past[past.length - 1];
+    setPast(past.slice(0, -1));
+    setFuture([...future, deepClone(scenariosRef.current)]);
+    setScenarios(prev);
+    setSelectedIds([]);
+    setConfirmOpen(false);
+  };
+  const redo = () => {
+    if (!future.length) return;
+    const next = future[future.length - 1];
+    setFuture(future.slice(0, -1));
+    setPast([...past, deepClone(scenariosRef.current)]);
+    setScenarios(next);
+    setSelectedIds([]);
+  };
+
   // 현재 프레임에 엔티티 상태를 기록(병합)
   const writeState = useCallback(
     (id: string, patch: Partial<EntityState>) => {
+      recordHistory();
       setScenarios((prev) =>
         prev.map((s) => {
           if (s.id !== scenarioId) return s;
@@ -341,6 +411,7 @@ export default function TacticsBoard() {
     const cur = states[id] ?? { x: 50, y: 50 };
     const p = pointerToPercent(e.clientX, e.clientY);
     dragRef.current = { id, mode: "point", offX: p.x - cur.x, offY: p.y - cur.y };
+    beginCoalesce(); // 드래그 전체를 한 단계로
     capture(e);
   };
 
@@ -379,6 +450,7 @@ export default function TacticsBoard() {
     } else {
       dragRef.current = { id, mode, offX: p.x - cur.x, offY: p.y - cur.y };
     }
+    beginCoalesce(); // 라인 드래그 전체를 한 단계로
     capture(e);
   };
 
@@ -406,16 +478,9 @@ export default function TacticsBoard() {
     } else if (tool === "laser") {
       setLaser(p);
       capture(e);
-    } else if (tool === "text") {
-      // 편집 중이면 빈 곳 클릭은 '확정'만 (새 텍스트 생성 X)
-      if (editingTextId) {
-        setEditingTextId(null);
-        return;
-      }
-      const t: TextAnno = { id: uid("tx"), x: p.x, y: p.y, text: "", color: penColor };
-      setTexts((prev) => [...prev, t]);
-      setEditingTextId(t.id);
     }
+    // 텍스트는 click 시점에 생성 (pointerdown→mousedown 기본 포커스 동작이
+    // 갓 만든 입력창을 blur시켜 사라지는 문제 방지)
   };
 
   // 기존 텍스트 잡고 드래그 시작 (텍스트 도구에서)
@@ -566,6 +631,7 @@ export default function TacticsBoard() {
       setMarquee(null);
     }
     dragRef.current = null;
+    endCoalesce(); // 드래그 종료 → 다음 변경은 새 단계
   };
 
   // 사각형(퍼센트) 안에 들어오는 보이는 오브젝트 id 목록
@@ -591,7 +657,7 @@ export default function TacticsBoard() {
   };
 
   // ── 프레젠트 모드: 보드 클릭 → 다음 프레임 ─────────────────
-  const onBoardClick = () => {
+  const onBoardClick = (e?: React.MouseEvent) => {
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return;
@@ -600,22 +666,54 @@ export default function TacticsBoard() {
       setSelectedIds([]);
       return;
     }
-    // 주석 도구 사용 중에는 클릭으로 장면을 넘기지 않음 (커서 도구일 때만)
+    // 텍스트 도구: 빈 곳 클릭 → 새 텍스트 생성(편집). click 시점이라 입력창이
+    // 포커스를 유지한다. 편집 중이면 클릭은 '확정'만.
+    if (tool === "text") {
+      if (editingTextId) {
+        setEditingTextId(null);
+        return;
+      }
+      if (!e) return;
+      const p = pointerToPercent(e.clientX, e.clientY);
+      const t: TextAnno = {
+        id: uid("tx"),
+        x: p.x,
+        y: p.y,
+        text: "",
+        color: penColor,
+      };
+      setTexts((prev) => [...prev, t]);
+      setEditingTextId(t.id);
+      return;
+    }
+    // 그 외 주석 도구 사용 중에는 클릭으로 장면을 넘기지 않음 (커서 도구일 때만)
     if (tool !== "cursor") return;
     if (frameIndex < scenario.frames.length - 1) go(1);
   };
 
   // ── 편집 액션들 ─────────────────────────────────────────
   const updateScenario = (fn: (s: Scenario) => Scenario) => {
+    recordHistory();
     setScenarios((prev) =>
       prev.map((s) => (s.id === scenarioId ? fn(deepClone(s)) : s))
     );
   };
 
-  const rotateSelected = (delta: number) => {
+  // 버튼: 15도 격자에 '딱 맞춰' 한 칸씩 회전 (3도여도 누르면 0/15로 고정)
+  const rotateStep = (dir: 1 | -1) => {
     if (!primaryId) return;
-    const cur = states[primaryId] ?? { x: 50, y: 50 };
-    writeState(primaryId, { rotation: (cur.rotation ?? 0) + delta });
+    const cur = states[primaryId]?.rotation ?? 0;
+    const next =
+      dir > 0
+        ? (Math.floor(cur / 15) + 1) * 15
+        : (Math.ceil(cur / 15) - 1) * 15;
+    writeState(primaryId, { rotation: next });
+  };
+
+  // 노브: 임의 각도로 미세 조절
+  const setRotation = (deg: number) => {
+    if (!primaryId) return;
+    writeState(primaryId, { rotation: deg });
   };
 
   const toggleVisibleSelected = () => {
@@ -647,7 +745,7 @@ export default function TacticsBoard() {
     const ent: Entity = {
       id,
       type,
-      lineStyle: type === "line" ? lineStyle ?? "plain" : undefined,
+      lineStyle: type === "line" ? lineStyle ?? "solid" : undefined,
       label:
         type === "boat"
           ? String.fromCharCode(65 + (scenario.entities.filter((e) => e.type === "boat").length % 26))
@@ -655,8 +753,6 @@ export default function TacticsBoard() {
           ? "마크"
           : type === "note"
           ? "메모"
-          : type === "line"
-          ? LINE_STYLES[lineStyle ?? "plain"].ko
           : undefined,
       color:
         type === "boat"
@@ -684,7 +780,7 @@ export default function TacticsBoard() {
       id,
       type: "line",
       lineStyle: style,
-      label: LINE_STYLES[style].ko,
+      // 라벨 없음 (자동 텍스트 X)
     };
     updateScenario((s) => {
       s.entities.push(ent);
@@ -757,6 +853,8 @@ export default function TacticsBoard() {
     setScenarioId(SCENARIOS[0].id);
     setFrameIndex(0);
     setSelectedIds([]);
+    setPast([]);
+    setFuture([]);
   };
 
   const selectedEntity = scenario.entities.find((e) => e.id === primaryId);
@@ -797,15 +895,44 @@ export default function TacticsBoard() {
               setConfirmOpen(false);
               setDrawStyle(null);
               setDraft(null);
+              setPast([]);
+              setFuture([]);
+              endCoalesce();
             }}
             style={{ ...S.btn, ...(editMode ? S.btnActive : {}) }}
           >
             {editMode ? "✏️ 편집 중" : "✏️ 편집"}
           </button>
           {editMode && (
-            <button onClick={resetAll} style={{ ...S.btn, ...S.btnGhost }}>
-              ↺ 초기화
-            </button>
+            <>
+              <button
+                onClick={undo}
+                disabled={past.length === 0}
+                title="실행 취소 (⌘/Ctrl+Z)"
+                style={{
+                  ...S.btn,
+                  ...S.btnGhost,
+                  opacity: past.length === 0 ? 0.4 : 1,
+                }}
+              >
+                ↶ 되돌리기
+              </button>
+              <button
+                onClick={redo}
+                disabled={future.length === 0}
+                title="다시 실행 (⌘/Ctrl+Shift+Z)"
+                style={{
+                  ...S.btn,
+                  ...S.btnGhost,
+                  opacity: future.length === 0 ? 0.4 : 1,
+                }}
+              >
+                ↷ 다시 실행
+              </button>
+              <button onClick={resetAll} style={{ ...S.btn, ...S.btnGhost }}>
+                ↺ 초기화
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -815,6 +942,7 @@ export default function TacticsBoard() {
         <div style={S.boardWrap}>
           <div
             ref={boardRef}
+            data-board
             style={{
               ...S.board,
               cursor: drawStyle
@@ -858,7 +986,7 @@ export default function TacticsBoard() {
               </svg>
             )}
 
-            {/* 라인 레이어 (레이라인 / 구분선 / 오버랩 / 화살표) */}
+            {/* 라인 레이어 (실선 / 구분선 / 일방향·양방향 화살표) */}
             {size.w > 0 && (
               <svg
                 style={{ ...S.overlay, zIndex: 2 }}
@@ -1250,6 +1378,9 @@ export default function TacticsBoard() {
                       onPointerDown={(e) =>
                         tool === "text" ? startTextDrag(e, t) : undefined
                       }
+                      onClick={(e) => {
+                        if (tool === "text") e.stopPropagation();
+                      }}
                       onDoubleClick={(e) => {
                         if (tool === "text") {
                           e.stopPropagation();
@@ -1298,70 +1429,67 @@ export default function TacticsBoard() {
               />
             )}
 
-            {/* 프리젠테이션 주석 도구 막대 */}
-            {!editMode && (
-              <div
-                style={S.annToolbar}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {([
-                  ["cursor", "↖", "커서"],
-                  ["pen", "✎", "펜"],
-                  ["eraser", "⌫", "지우개"],
-                  ["laser", "•", "레이저"],
-                  ["text", "T", "텍스트"],
-                ] as [PresentTool, string, string][]).map(([t, icon, label]) => (
-                  <button
-                    key={t}
-                    onClick={() => setTool(t)}
-                    title={label}
-                    style={{
-                      ...S.toolBtn,
-                      ...(tool === t ? S.toolBtnActive : {}),
-                    }}
-                  >
-                    <span style={{ fontSize: 16, lineHeight: 1 }}>{icon}</span>
-                    <span style={{ fontSize: 9.5 }}>{label}</span>
-                  </button>
-                ))}
-
-                {(tool === "pen" || tool === "text") && (
-                  <div style={S.toolDivider}>
-                    {INK_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => setPenColor(c)}
-                        title="색상"
-                        style={{
-                          width: 20,
-                          height: 20,
-                          borderRadius: "50%",
-                          background: c,
-                          border:
-                            penColor === c
-                              ? "2px solid #fff"
-                              : "2px solid rgba(255,255,255,0.25)",
-                          cursor: "pointer",
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                <div style={S.toolDivider}>
-                  <button
-                    onClick={clearAnnotations}
-                    title="모두 지우기"
-                    style={{ ...S.toolBtn, color: "#ff9a9a" }}
-                  >
-                    <span style={{ fontSize: 15, lineHeight: 1 }}>🗑</span>
-                    <span style={{ fontSize: 9.5 }}>전체 지우기</span>
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
+
+          {/* 프리젠테이션 주석 도구 막대 (보드 바깥, 아래·컴팩트) */}
+          {!editMode && (
+            <div style={S.annToolbar}>
+              {([
+                ["cursor", "↖", "커서"],
+                ["pen", "✎", "펜"],
+                ["eraser", "⌫", "지우개"],
+                ["laser", "•", "레이저"],
+                ["text", "T", "텍스트"],
+              ] as [PresentTool, string, string][]).map(([t, icon, label]) => (
+                <button
+                  key={t}
+                  onClick={() => setTool(t)}
+                  title={label}
+                  style={{
+                    ...S.toolBtn,
+                    ...(tool === t ? S.toolBtnActive : {}),
+                  }}
+                >
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>{icon}</span>
+                  <span style={{ fontSize: 11 }}>{label}</span>
+                </button>
+              ))}
+
+              {(tool === "pen" || tool === "text") && (
+                <div style={S.toolDivider}>
+                  {INK_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setPenColor(c)}
+                      title="색상"
+                      style={{
+                        width: 18,
+                        height: 18,
+                        borderRadius: "50%",
+                        background: c,
+                        border:
+                          penColor === c
+                            ? "2px solid #fff"
+                            : "2px solid rgba(255,255,255,0.25)",
+                        cursor: "pointer",
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <div style={S.toolDivider}>
+                <button
+                  onClick={clearAnnotations}
+                  title="모두 지우기"
+                  style={{ ...S.toolBtn, color: "#ff9a9a" }}
+                >
+                  <span style={{ fontSize: 13, lineHeight: 1 }}>🗑</span>
+                  <span style={{ fontSize: 11 }}>지우기</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* 필름스트립 */}
           <div style={S.filmstrip}>
@@ -1413,7 +1541,10 @@ export default function TacticsBoard() {
               selectedState={primaryId ? states[primaryId] : undefined}
               selectedCount={selectedIds.length}
               editEntityLabel={editEntityLabel}
-              rotateSelected={rotateSelected}
+              rotateStep={rotateStep}
+              setRotation={setRotation}
+              beginCoalesce={beginCoalesce}
+              endCoalesce={endCoalesce}
               toggleVisibleSelected={toggleVisibleSelected}
               deleteSelected={deleteSelectedMany}
             />
@@ -1527,7 +1658,10 @@ function EditPanel({
   selectedState,
   selectedCount,
   editEntityLabel,
-  rotateSelected,
+  rotateStep,
+  setRotation,
+  beginCoalesce,
+  endCoalesce,
   toggleVisibleSelected,
   deleteSelected,
 }: {
@@ -1544,7 +1678,10 @@ function EditPanel({
   selectedState?: EntityState;
   selectedCount: number;
   editEntityLabel: (s: string) => void;
-  rotateSelected: (d: number) => void;
+  rotateStep: (dir: 1 | -1) => void;
+  setRotation: (deg: number) => void;
+  beginCoalesce: () => void;
+  endCoalesce: () => void;
   toggleVisibleSelected: () => void;
   deleteSelected: () => void;
 }) {
@@ -1556,12 +1693,16 @@ function EditPanel({
         <input
           style={S.input}
           value={frame.title}
+          onFocus={beginCoalesce}
+          onBlur={endCoalesce}
           onChange={(e) => editFrameText({ title: e.target.value })}
         />
       </div>
       <div>
         <label style={S.label}>전술 설명</label>
         <textarea
+          onFocus={beginCoalesce}
+          onBlur={endCoalesce}
           style={{ ...S.input, height: 120, resize: "vertical" }}
           value={frame.description}
           onChange={(e) => editFrameText({ description: e.target.value })}
@@ -1610,10 +1751,10 @@ function EditPanel({
         <label style={S.label}>라인 그리기</label>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {([
-            ["layline", "┄ 레이라인"],
+            ["solid", "── 실선"],
             ["divider", "┈ 구분선"],
-            ["overlap", "↔ 오버랩"],
-            ["plain", "→ 화살표"],
+            ["arrow", "→ 일방향 화살표"],
+            ["darrow", "↔ 양방향 화살표"],
           ] as [LineStyle, string][]).map(([style, label]) => (
             <button
               key={style}
@@ -1655,16 +1796,18 @@ function EditPanel({
                 style={S.input}
                 value={selectedEntity.label}
                 placeholder="라벨"
+                onFocus={beginCoalesce}
+                onBlur={endCoalesce}
                 onChange={(e) => editEntityLabel(e.target.value)}
               />
             )}
             {isLine ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {([
-                  ["layline", "레이라인"],
+                  ["solid", "실선"],
                   ["divider", "구분선"],
-                  ["overlap", "오버랩"],
-                  ["plain", "화살표"],
+                  ["arrow", "일방향 화살표"],
+                  ["darrow", "양방향 화살표"],
                 ] as [LineStyle, string][]).map(([style, label]) => (
                   <button
                     key={style}
@@ -1680,16 +1823,41 @@ function EditPanel({
                 ))}
               </div>
             ) : (
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <button onClick={() => rotateSelected(-15)} style={{ ...S.btn, ...S.btnSm }}>
-                  ↺ 회전
-                </button>
-                <button onClick={() => rotateSelected(15)} style={{ ...S.btn, ...S.btnSm }}>
-                  회전 ↻
-                </button>
-                <span style={{ fontSize: 12, color: "var(--chalk-dim)" }}>
-                  {Math.round(selectedState?.rotation ?? 0)}°
-                </span>
+              <div>
+                <label style={S.label}>회전</label>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button
+                    onClick={() => rotateStep(-1)}
+                    title="15° 격자로 반시계"
+                    style={{ ...S.btn, ...S.btnSm }}
+                  >
+                    ↺ 15°
+                  </button>
+                  <button
+                    onClick={() => rotateStep(1)}
+                    title="15° 격자로 시계"
+                    style={{ ...S.btn, ...S.btnSm }}
+                  >
+                    15° ↻
+                  </button>
+                  <RotationKnob
+                    value={selectedState?.rotation ?? 0}
+                    onChange={setRotation}
+                    onStart={beginCoalesce}
+                    onEnd={endCoalesce}
+                  />
+                  <span
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: "var(--chalk)",
+                      minWidth: 38,
+                      textAlign: "right",
+                    }}
+                  >
+                    {Math.round(((selectedState?.rotation ?? 0) % 360 + 360) % 360)}°
+                  </span>
+                </div>
               </div>
             )}
             <div style={{ display: "flex", gap: 6 }}>
@@ -1727,6 +1895,95 @@ function EditPanel({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── 회전 노브 (드래그로 임의 각도 미세 조절) ──────────────────
+function RotationKnob({
+  value,
+  onChange,
+  onStart,
+  onEnd,
+}: {
+  value: number;
+  onChange: (deg: number) => void;
+  onStart?: () => void;
+  onEnd?: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const apply = (clientX: number, clientY: number) => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    // 0° = 위, 시계방향 +
+    const deg = (Math.atan2(clientX - cx, -(clientY - cy)) * 180) / Math.PI;
+    onChange(Math.round(deg));
+  };
+  return (
+    <div
+      ref={ref}
+      onPointerDown={(e) => {
+        dragging.current = true;
+        onStart?.();
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* noop */
+        }
+        apply(e.clientX, e.clientY);
+      }}
+      onPointerMove={(e) => {
+        if (dragging.current) apply(e.clientX, e.clientY);
+      }}
+      onPointerUp={() => {
+        if (dragging.current) onEnd?.();
+        dragging.current = false;
+      }}
+      title="드래그해서 각도 미세 조절"
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: "50%",
+        border: "1px solid rgba(234,243,236,0.3)",
+        background: "rgba(8,24,21,0.6)",
+        position: "relative",
+        cursor: "grab",
+        touchAction: "none",
+        flexShrink: 0,
+      }}
+    >
+      {/* 방향 표시 바늘 */}
+      <div
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          width: 2.5,
+          height: "44%",
+          background: "var(--hero)",
+          borderRadius: 2,
+          transformOrigin: "bottom center",
+          transform: `translate(-50%, -100%) rotate(${value}deg)`,
+        }}
+      />
+      {/* 중심점 */}
+      <div
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          width: 6,
+          height: 6,
+          marginLeft: -3,
+          marginTop: -3,
+          borderRadius: "50%",
+          background: "var(--hero)",
+        }}
+      />
     </div>
   );
 }
@@ -1852,33 +2109,28 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 800,
   },
   annToolbar: {
-    position: "absolute",
-    bottom: 14,
-    left: "50%",
-    transform: "translateX(-50%)",
+    alignSelf: "center",
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    padding: "7px 10px",
-    background: "rgba(8,24,21,0.86)",
-    border: "1px solid rgba(234,243,236,0.16)",
-    borderRadius: 14,
-    backdropFilter: "blur(8px)",
-    boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-    zIndex: 60,
+    gap: 4,
+    padding: "5px 8px",
+    background: "rgba(8,24,21,0.7)",
+    border: "1px solid rgba(234,243,236,0.14)",
+    borderRadius: 12,
+    boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
   },
   toolBtn: {
     display: "flex",
-    flexDirection: "column",
+    flexDirection: "row",
     alignItems: "center",
-    gap: 2,
-    width: 46,
-    padding: "6px 4px",
-    borderRadius: 9,
+    gap: 5,
+    padding: "5px 9px",
+    borderRadius: 8,
     border: "1px solid transparent",
     background: "transparent",
     color: "var(--chalk)",
     fontWeight: 600,
+    whiteSpace: "nowrap",
   },
   toolBtnActive: {
     background: "var(--hero)",

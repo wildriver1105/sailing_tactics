@@ -5,10 +5,10 @@ export type EntityType =
   | "pin" // 핀 엔드 (시작선 좌측)
   | "wind" // 바람 화살표
   | "note" // 텍스트 라벨
-  | "line"; // 레이라인 / 구분선 / 오버랩 등
+  | "line"; // 실선 / 구분선 / 일방향·양방향 화살표
 
-/** 라인 종류별 시각 스타일 */
-export type LineStyle = "layline" | "divider" | "overlap" | "plain";
+/** 라인 종류: 실선 / 구분선 / 일방향 화살표 / 양방향 화살표 */
+export type LineStyle = "solid" | "divider" | "arrow" | "darrow";
 
 export interface Entity {
   id: string;
