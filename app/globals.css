@@ -1,0 +1,50 @@
+:root {
+  --board-1: #16413a;
+  --board-2: #0e2f2a;
+  --chalk: #eaf3ec;
+  --chalk-dim: rgba(234, 243, 236, 0.55);
+  --chalk-faint: rgba(234, 243, 236, 0.16);
+  --hero: #ffd54a;
+  --accent: #7fd1ff;
+  --frame: #d9b48f;
+  --panel: rgba(8, 24, 21, 0.72);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: var(--chalk);
+  background: #0b1f1c;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* 분필 질감 텍스트 */
+.chalk-text {
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+::selection {
+  background: rgba(255, 213, 74, 0.35);
+}
+
+input,
+textarea {
+  font-family: inherit;
+}
