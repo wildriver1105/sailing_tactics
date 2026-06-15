@@ -98,6 +98,12 @@ export default function TacticsBoard() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const strokeRef = useRef<Stroke | null>(null);
   const erasingRef = useRef(false);
+  const textDragRef = useRef<{
+    id: string;
+    offX: number;
+    offY: number;
+    moved: boolean;
+  } | null>(null);
 
   const scenario =
     scenarios.find((s) => s.id === scenarioId) ?? scenarios[0];
@@ -401,14 +407,38 @@ export default function TacticsBoard() {
       setLaser(p);
       capture(e);
     } else if (tool === "text") {
+      // 편집 중이면 빈 곳 클릭은 '확정'만 (새 텍스트 생성 X)
+      if (editingTextId) {
+        setEditingTextId(null);
+        return;
+      }
       const t: TextAnno = { id: uid("tx"), x: p.x, y: p.y, text: "", color: penColor };
       setTexts((prev) => [...prev, t]);
       setEditingTextId(t.id);
     }
   };
 
+  // 기존 텍스트 잡고 드래그 시작 (텍스트 도구에서)
+  const startTextDrag = (e: React.PointerEvent, t: TextAnno) => {
+    e.stopPropagation();
+    const p = pointerToPercent(e.clientX, e.clientY);
+    textDragRef.current = { id: t.id, offX: p.x - t.x, offY: p.y - t.y, moved: false };
+    capture(e);
+  };
+
   const onPresentPointerMove = (e: React.PointerEvent) => {
     const p = pointerToPercent(e.clientX, e.clientY);
+    // 텍스트 드래그 이동 중
+    if (textDragRef.current) {
+      const d = textDragRef.current;
+      d.moved = true;
+      const nx = clamp(p.x - d.offX);
+      const ny = clamp(p.y - d.offY);
+      setTexts((prev) =>
+        prev.map((t) => (t.id === d.id ? { ...t, x: nx, y: ny } : t))
+      );
+      return;
+    }
     if (tool === "laser") {
       setLaser(p);
       return;
@@ -422,6 +452,10 @@ export default function TacticsBoard() {
   };
 
   const onPresentPointerUp = () => {
+    if (textDragRef.current) {
+      textDragRef.current = null;
+      return;
+    }
     if (strokeRef.current) {
       const s = strokeRef.current;
       if (s.pts.length > 1) setStrokes((prev) => [...prev, s]);
@@ -1167,12 +1201,18 @@ export default function TacticsBoard() {
                     transform: "translate(-2px, -50%)",
                     zIndex: 52,
                     color: t.color,
+                    pointerEvents: "none", // 내부 요소만 개별적으로 활성
                   }}
                 >
                   {editingTextId === t.id ? (
                     <input
                       autoFocus
                       value={t.text}
+                      // 입력창 위 포인터 이벤트가 보드로 전파돼 새 텍스트가 생기는 것을 차단
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      onDoubleClick={(e) => e.stopPropagation()}
                       onChange={(e) =>
                         setTexts((prev) =>
                           prev.map((x) =>
@@ -1187,11 +1227,13 @@ export default function TacticsBoard() {
                         );
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Enter" || e.key === "Escape")
+                          e.currentTarget.blur();
+                        e.stopPropagation();
                       }}
                       placeholder="텍스트…"
                       style={{
-                        background: "rgba(8,24,21,0.6)",
+                        background: "rgba(8,24,21,0.7)",
                         border: `1px dashed ${t.color}`,
                         borderRadius: 6,
                         color: t.color,
@@ -1199,24 +1241,33 @@ export default function TacticsBoard() {
                         fontWeight: 700,
                         padding: "2px 8px",
                         outline: "none",
-                        minWidth: 80,
+                        minWidth: 90,
+                        pointerEvents: "auto",
                       }}
                     />
                   ) : (
                     <span
-                      onPointerDown={(e) => {
+                      onPointerDown={(e) =>
+                        tool === "text" ? startTextDrag(e, t) : undefined
+                      }
+                      onDoubleClick={(e) => {
                         if (tool === "text") {
                           e.stopPropagation();
                           setEditingTextId(t.id);
                         }
                       }}
+                      title={tool === "text" ? "드래그: 이동 · 더블클릭: 편집" : undefined}
                       style={{
+                        display: "inline-block",
                         fontSize: 18,
                         fontWeight: 800,
                         textShadow: "0 1px 3px rgba(0,0,0,0.6)",
                         pointerEvents: tool === "text" ? "auto" : "none",
-                        cursor: tool === "text" ? "text" : "default",
+                        cursor: tool === "text" ? "move" : "default",
                         whiteSpace: "nowrap",
+                        userSelect: "none",
+                        touchAction: "none",
+                        padding: "2px 4px",
                       }}
                     >
                       {t.text}
