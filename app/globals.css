@@ -27,6 +27,19 @@ body {
   color: var(--chalk);
   background: #0b1f1c;
   -webkit-font-smoothing: antialiased;
+  /* 네이티브 앱 느낌: 바운스 스크롤·탭 하이라이트·길게 눌러 링크 미리보기 제거 */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* 앱 루트: iPad/iOS 안전 영역(노치·홈 인디케이터) 만큼 안쪽 여백 확보.
+   데스크톱에서는 env(...) 값이 0이라 영향 없음. (box-sizing: border-box 전제) */
+.app-root {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
 }
 
 button {

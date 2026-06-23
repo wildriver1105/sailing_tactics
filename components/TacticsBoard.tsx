@@ -20,8 +20,17 @@ import {
   resolveStates,
 } from "@/lib/types";
 import { EntityIcon, iconSize } from "./EntityIcon";
+import {
+  initStorage,
+  listScenarios,
+  saveScenario,
+  deleteScenario,
+  saveAll,
+  exportScenario,
+  importScenario,
+  isTauri,
+} from "@/lib/storage";
 
-const STORAGE_KEY = "sailing_tactics_v1";
 const MOVE_TRANSITION = { duration: 0.95, ease: [0.22, 1, 0.36, 1] as const };
 
 /** 라인 스타일별 시각 설정 */
@@ -119,28 +128,63 @@ export default function TacticsBoard() {
     scenarios.find((s) => s.id === scenarioId) ?? scenarios[0];
   const frame = scenario.frames[frameIndex] ?? scenario.frames[0];
 
-  // ── localStorage 로드/저장 ───────────────────────────────
+  // ── 네이티브 파일 시스템(또는 브라우저 localStorage) 로드/저장 ──────
+  // 마지막으로 디스크에 반영된 스냅샷 (시나리오별 diff 저장용)
+  const prevSavedRef = useRef<Scenario[]>([]);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 최초 로드: 저장된 시나리오 파일을 읽어오고, 없으면 시드로 초기화한다.
+  // 로드를 완전히 끝낸 뒤에만 loaded=true → 저장 effect가 시드로 실데이터를 덮어쓰지 않음.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Scenario[];
-        if (Array.isArray(parsed) && parsed.length) setScenarios(parsed);
+    (async () => {
+      try {
+        await initStorage();
+        const files = await listScenarios();
+        if (files.length) {
+          setScenarios(files);
+          prevSavedRef.current = files;
+          setScenarioId((cur) =>
+            files.some((s) => s.id === cur) ? cur : files[0].id
+          );
+        } else {
+          // 최초 실행: 시드 시나리오를 각각 개별 파일로 저장
+          const seed = scenariosRef.current;
+          await saveAll(seed);
+          prevSavedRef.current = seed;
+        }
+      } catch {
+        /* 저장소 접근 실패 시 인메모리 시드로 계속 진행 */
       }
-    } catch {
-      /* ignore */
-    }
-    setLoaded(true);
+      setLoaded(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 디스크 반영: 변경/신규 시나리오만 저장, 삭제된 시나리오 파일은 제거.
+  const flushSave = useCallback(async () => {
+    const prev = prevSavedRef.current;
+    const cur = scenariosRef.current;
+    const prevById = new Map(prev.map((s) => [s.id, s]));
+    for (const s of cur) {
+      const old = prevById.get(s.id);
+      if (!old || JSON.stringify(old) !== JSON.stringify(s)) {
+        await saveScenario(s);
+      }
+    }
+    const curIds = new Set(cur.map((s) => s.id));
+    for (const s of prev) if (!curIds.has(s.id)) await deleteScenario(s.id);
+    prevSavedRef.current = cur;
+  }, []);
+
+  // 변경 시 디바운스(400ms) — 드래그/타이핑 중 디스크 쓰기 폭주 방지.
+  // 클린업에서 타이머를 지우지 않으므로(표준 디바운스로 재예약만) 마지막 저장이 유실되지 않음.
   useEffect(() => {
     if (!loaded) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(scenarios));
-    } catch {
-      /* ignore */
-    }
-  }, [scenarios, loaded]);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      void flushSave();
+    }, 400);
+  }, [scenarios, loaded, flushSave]);
 
   // ── 보드 크기 측정 ───────────────────────────────────────
   const boardRef = useRef<HTMLDivElement>(null);
@@ -857,6 +901,27 @@ export default function TacticsBoard() {
     setFuture([]);
   };
 
+  // 현재 시나리오를 JSON 파일로 내보내기 (네이티브 전용)
+  const handleExport = async () => {
+    const ok = await exportScenario(scenario);
+    if (ok) return;
+    alert("내보내기는 데스크톱/네이티브 앱에서만 지원됩니다.");
+  };
+
+  // JSON 파일을 시나리오로 가져오기 (네이티브 전용)
+  const handleImport = async () => {
+    const imported = await importScenario();
+    if (!imported) return;
+    // id 충돌 시 새 id 부여하여 추가
+    const collides = scenariosRef.current.some((s) => s.id === imported.id);
+    const next = collides
+      ? { ...imported, id: uid("scn"), name: `${imported.name} (가져옴)` }
+      : imported;
+    setScenarios((prev) => [...prev, next]);
+    setScenarioId(next.id);
+    setFrameIndex(0);
+  };
+
   const selectedEntity = scenario.entities.find((e) => e.id === primaryId);
 
   // 스타트 라인 좌표 (rc ↔ pin)
@@ -867,8 +932,26 @@ export default function TacticsBoard() {
     return { rc, pin };
   }, [states]);
 
+  // 저장소 로드 완료 전: 시드가 실제 저장 데이터를 깜빡 덮어쓰는 것을 막기 위해 로딩 표시
+  if (!loaded) {
+    return (
+      <div
+        style={{
+          ...S.root,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#9fb4ab",
+          fontSize: 14,
+        }}
+      >
+        불러오는 중…
+      </div>
+    );
+  }
+
   return (
-    <div style={S.root}>
+    <div className="app-root" style={S.root}>
       {/* 상단 바 */}
       <header style={S.topbar}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
@@ -932,6 +1015,24 @@ export default function TacticsBoard() {
               <button onClick={resetAll} style={{ ...S.btn, ...S.btnGhost }}>
                 ↺ 초기화
               </button>
+              {isTauri() && (
+                <>
+                  <button
+                    onClick={handleExport}
+                    title="현재 시나리오를 JSON 파일로 내보내기"
+                    style={{ ...S.btn, ...S.btnGhost }}
+                  >
+                    ⤓ 내보내기
+                  </button>
+                  <button
+                    onClick={handleImport}
+                    title="JSON 파일에서 시나리오 가져오기"
+                    style={{ ...S.btn, ...S.btnGhost }}
+                  >
+                    ⤒ 가져오기
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>
@@ -1991,7 +2092,7 @@ function RotationKnob({
 // ── 스타일 ───────────────────────────────────────────────────
 const S: Record<string, React.CSSProperties> = {
   root: {
-    height: "100vh",
+    height: "100dvh",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
