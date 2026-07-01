@@ -3,7 +3,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -48,6 +47,19 @@ function lineCfg(en: Entity) {
   // 알 수 없는(예전) 스타일 키는 실선으로 폴백
   const base = LINE_STYLES[en.lineStyle as LineStyle] ?? LINE_STYLES.solid;
   return { ...base, color: en.color ?? base.color };
+}
+
+// 좁은 화면(모바일) 감지 — 세로 스택 레이아웃으로 전환
+function useIsMobile() {
+  const [m, setM] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const on = () => setM(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return m;
 }
 
 // ── 프리젠테이션 주석 (키노트식 펜/지우개/레이저/텍스트) ──────────
@@ -127,6 +139,7 @@ export default function TacticsBoard() {
   const scenario =
     scenarios.find((s) => s.id === scenarioId) ?? scenarios[0];
   const frame = scenario.frames[frameIndex] ?? scenario.frames[0];
+  const mobile = useIsMobile();
 
   // ── 네이티브 파일 시스템(또는 브라우저 localStorage) 로드/저장 ──────
   // 마지막으로 디스크에 반영된 스냅샷 (시나리오별 diff 저장용)
@@ -189,15 +202,20 @@ export default function TacticsBoard() {
   // ── 보드 크기 측정 ───────────────────────────────────────
   const boardRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  useLayoutEffect(() => {
-    const el = boardRef.current;
+  const roRef = useRef<ResizeObserver | null>(null);
+  // 콜백 ref: 보드가 마운트되는 정확한 시점에 측정 + ResizeObserver 부착
+  // (객체 ref는 이 컴포넌트에서 측정 이펙트 실행 시점에 null이라 측정이 누락됐음)
+  const attachBoard = useCallback((el: HTMLDivElement | null) => {
+    boardRef.current = el;
+    roRef.current?.disconnect();
+    roRef.current = null;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      setSize({ w: el.clientWidth, h: el.clientHeight });
-    });
+    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setSize({ w: el.clientWidth, h: el.clientHeight });
-    return () => ro.disconnect();
+    roRef.current = ro;
+    measure();
+    requestAnimationFrame(measure);
   }, []);
 
   const states = useMemo(
@@ -951,12 +969,22 @@ export default function TacticsBoard() {
   }
 
   return (
-    <div className="app-root" style={S.root}>
+    <div
+      className="app-root"
+      style={{
+        ...S.root,
+        ...(mobile ? { height: "100dvh" } : {}),
+      }}
+    >
       {/* 상단 바 */}
-      <header style={S.topbar}>
+      <header
+        style={{ ...S.topbar, ...(mobile ? { padding: "10px 12px" } : {}) }}
+      >
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-          <span style={S.logo}>⛵ Sailing Tactics</span>
-          <span style={S.logoSub}>세일링 전술 보드</span>
+          <span style={{ ...S.logo, ...(mobile ? { fontSize: 16 } : {}) }}>
+            ⛵ Sailing Tactics
+          </span>
+          {!mobile && <span style={S.logoSub}>세일링 전술 보드</span>}
         </div>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1038,14 +1066,34 @@ export default function TacticsBoard() {
         </div>
       </header>
 
-      <div style={S.main}>
+      <div
+        style={{
+          ...S.main,
+          ...(mobile
+            ? { flexDirection: "column", overflowY: "auto" }
+            : {}),
+        }}
+      >
         {/* 보드 */}
-        <div style={S.boardWrap}>
+        <div
+          style={{
+            ...S.boardWrap,
+            ...(mobile ? { flexShrink: 0, padding: 10, gap: 8 } : {}),
+          }}
+        >
           <div
-            ref={boardRef}
+            ref={attachBoard}
             data-board
             style={{
               ...S.board,
+              ...(mobile
+                ? {
+                    flex: "none",
+                    width: "100%",
+                    aspectRatio: "1 / 1",
+                    border: "6px solid #6b4a2e",
+                  }
+                : {}),
               cursor: drawStyle
                 ? "crosshair"
                 : editMode
@@ -1534,25 +1582,37 @@ export default function TacticsBoard() {
 
           {/* 프리젠테이션 주석 도구 막대 (보드 바깥, 아래·컴팩트) */}
           {!editMode && (
-            <div style={S.annToolbar}>
+            <div
+              style={{
+                ...S.annToolbar,
+                ...(mobile
+                  ? {
+                      alignSelf: "stretch",
+                      maxWidth: "100%",
+                      overflowX: "auto",
+                      justifyContent: "flex-start",
+                    }
+                  : {}),
+              }}
+            >
               {([
                 ["cursor", "↖", "커서"],
                 ["pen", "✎", "펜"],
                 ["eraser", "⌫", "지우개"],
-                ["laser", "•", "레이저"],
+                ["laser", "◉", "레이저"],
                 ["text", "T", "텍스트"],
               ] as [PresentTool, string, string][]).map(([t, icon, label]) => (
                 <button
                   key={t}
                   onClick={() => setTool(t)}
                   title={label}
+                  aria-label={label}
                   style={{
                     ...S.toolBtn,
                     ...(tool === t ? S.toolBtnActive : {}),
                   }}
                 >
-                  <span style={{ fontSize: 14, lineHeight: 1 }}>{icon}</span>
-                  <span style={{ fontSize: 11 }}>{label}</span>
+                  <span style={{ fontSize: 17, lineHeight: 1 }}>{icon}</span>
                 </button>
               ))}
 
@@ -1583,10 +1643,10 @@ export default function TacticsBoard() {
                 <button
                   onClick={clearAnnotations}
                   title="모두 지우기"
+                  aria-label="모두 지우기"
                   style={{ ...S.toolBtn, color: "#ff9a9a" }}
                 >
-                  <span style={{ fontSize: 13, lineHeight: 1 }}>🗑</span>
-                  <span style={{ fontSize: 11 }}>지우기</span>
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>🗑</span>
                 </button>
               </div>
             </div>
@@ -1616,7 +1676,19 @@ export default function TacticsBoard() {
         </div>
 
         {/* 사이드 패널 */}
-        <aside style={S.panel}>
+        <aside
+          style={{
+            ...S.panel,
+            ...(mobile
+              ? {
+                  width: "100%",
+                  borderLeft: "none",
+                  borderTop: "1px solid rgba(234,243,236,0.12)",
+                  padding: 16,
+                }
+              : {}),
+          }}
+        >
           {!editMode ? (
             <PresentPanel
               scenario={scenario}
@@ -2232,6 +2304,7 @@ const S: Record<string, React.CSSProperties> = {
     color: "var(--chalk)",
     fontWeight: 600,
     whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   toolBtnActive: {
     background: "var(--hero)",
@@ -2245,6 +2318,7 @@ const S: Record<string, React.CSSProperties> = {
     paddingLeft: 8,
     marginLeft: 2,
     borderLeft: "1px solid rgba(234,243,236,0.16)",
+    flexShrink: 0,
   },
   filmstrip: {
     display: "flex",
