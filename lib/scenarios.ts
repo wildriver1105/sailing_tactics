@@ -18,6 +18,7 @@ export const SCENARIOS: Scenario[] = [
     id: "start",
     name: "스타트 라인 전략",
     blurb: "유리한 끝단 파악부터 가속·클리어 에어 확보까지",
+    group: "스타트",
     entities: [
       { id: "wind", type: "wind", label: "바람" },
       { id: "rc", type: "committee", label: "본부선" },
@@ -82,6 +83,7 @@ export const SCENARIOS: Scenario[] = [
     id: "windward",
     name: "풍상 마크 라운딩 & 레이라인",
     blurb: "오버스탠딩 피하기 · 마크룸 · 베어어웨이",
+    group: "마크 라운딩",
     entities: [
       { id: "wind", type: "wind", label: "바람" },
       { id: "mark", type: "mark", label: "1번 마크" },
@@ -155,6 +157,7 @@ export const SCENARIOS: Scenario[] = [
     id: "cross",
     name: "포트-스타보드 크로스 & 리바우",
     blurb: "교차 상황 판단 · 회피 · 리-바우로 압박",
+    group: "규칙 · 상황 판단",
     entities: [
       { id: "wind", type: "wind", label: "바람" },
       { id: "us", type: "boat", label: "US(S)", color: HERO, hero: true },

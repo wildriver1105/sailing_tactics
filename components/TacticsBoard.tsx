@@ -19,6 +19,7 @@ import {
   resolveStates,
 } from "@/lib/types";
 import { EntityIcon, iconSize } from "./EntityIcon";
+import ScenarioSidebar from "./ScenarioSidebar";
 import {
   initStorage,
   listScenarios,
@@ -28,6 +29,7 @@ import {
   exportScenario,
   importScenario,
   isTauri,
+  storageLocation,
 } from "@/lib/storage";
 
 const MOVE_TRANSITION = { duration: 0.95, ease: [0.22, 1, 0.36, 1] as const };
@@ -140,6 +142,19 @@ export default function TacticsBoard() {
     scenarios.find((s) => s.id === scenarioId) ?? scenarios[0];
   const frame = scenario.frames[frameIndex] ?? scenario.frames[0];
   const mobile = useIsMobile();
+  // ── 좌측 시나리오 패널 ────────────────────────────────────
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [storagePath, setStoragePath] = useState<string | null>(null);
+  const nativeApp = typeof window !== "undefined" && isTauri();
+  useEffect(() => {
+    if (mobile) setSidebarOpen(false);
+    else setSidebarOpen(true);
+  }, [mobile]);
+  useEffect(() => {
+    storageLocation()
+      .then(setStoragePath)
+      .catch(() => setStoragePath(null));
+  }, []);
 
   // ── 네이티브 파일 시스템(또는 브라우저 localStorage) 로드/저장 ──────
   // 마지막으로 디스크에 반영된 스냅샷 (시나리오별 diff 저장용)
@@ -210,13 +225,34 @@ export default function TacticsBoard() {
     roRef.current?.disconnect();
     roRef.current = null;
     if (!el) return;
-    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(() =>
+      setSize({ w: el.clientWidth, h: el.clientHeight })
+    );
     ro.observe(el);
     roRef.current = ro;
-    measure();
-    requestAnimationFrame(measure);
   }, []);
+
+  // 레이아웃이 확정될 때까지 실제 엘리먼트 크기를 폴링해 측정.
+  // (초기 마운트 시 보드 폭이 0이고 ResizeObserver 콜백이 안 오는 경우 방어)
+  useEffect(() => {
+    let raf = 0;
+    let tries = 0;
+    const tick = () => {
+      const el = boardRef.current;
+      if (el && el.clientWidth > 0) {
+        setSize((cur) =>
+          cur.w === el.clientWidth && cur.h === el.clientHeight
+            ? cur
+            : { w: el.clientWidth, h: el.clientHeight }
+        );
+        if (tries++ < 3) raf = requestAnimationFrame(tick); // 몇 프레임 더 확정
+      } else if (tries++ < 40) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [mobile, sidebarOpen, loaded]);
 
   const states = useMemo(
     () => resolveStates(scenario, frameIndex),
@@ -940,6 +976,82 @@ export default function TacticsBoard() {
     setFrameIndex(0);
   };
 
+  // ── 시나리오 관리 (좌측 패널 CRUD) ────────────────────────
+  const openScenario = (id: string) => {
+    setScenarioId(id);
+    setFrameIndex(0);
+    setSelectedIds([]);
+    if (mobile) setSidebarOpen(false);
+  };
+
+  const createScenario = (group?: string) => {
+    const id = uid("scn");
+    const g = group !== undefined ? group : scenario.group ?? "";
+    const s: Scenario = {
+      id,
+      name: "새 시나리오",
+      blurb: "",
+      group: g.trim() || undefined,
+      entities: [{ id: "wind", type: "wind", label: "바람" }],
+      frames: [
+        {
+          id: uid("f"),
+          title: "프레임 1",
+          description: "여기에 전술 설명을 입력하세요.",
+          states: { wind: { x: 50, y: 8, rotation: 180, visible: true } },
+        },
+      ],
+    };
+    setScenarios((prev) => [...prev, s]);
+    setScenarioId(id);
+    setFrameIndex(0);
+    setSelectedIds([]);
+    setEditMode(true);
+  };
+
+  const renameScenario = (id: string, name: string) =>
+    setScenarios((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+
+  const setScenarioGroup = (id: string, group: string) =>
+    setScenarios((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, group: group || undefined } : s))
+    );
+
+  const duplicateScenario = (id: string) => {
+    const src = scenariosRef.current.find((s) => s.id === id);
+    if (!src) return;
+    const copy = deepClone(src);
+    copy.id = uid("scn");
+    copy.name = `${src.name} 복사본`;
+    setScenarios((prev) => [...prev, copy]);
+    setScenarioId(copy.id);
+    setFrameIndex(0);
+  };
+
+  const deleteScenarioById = (id: string) => {
+    const all = scenariosRef.current;
+    if (all.length <= 1) {
+      alert("마지막 시나리오는 삭제할 수 없습니다.");
+      return;
+    }
+    const target = all.find((s) => s.id === id);
+    if (!confirm(`"${target?.name ?? ""}" 시나리오를 삭제할까요?`)) return;
+    const next = all.filter((s) => s.id !== id);
+    setScenarios(next);
+    if (scenarioId === id) {
+      setScenarioId(next[0].id);
+      setFrameIndex(0);
+      setSelectedIds([]);
+    }
+  };
+
+  const exportById = async (id: string) => {
+    const s = scenariosRef.current.find((x) => x.id === id);
+    if (!s) return;
+    const ok = await exportScenario(s);
+    if (!ok) alert("내보내기는 데스크톱/네이티브 앱에서만 지원됩니다.");
+  };
+
   const selectedEntity = scenario.entities.find((e) => e.id === primaryId);
 
   // 스타트 라인 좌표 (rc ↔ pin)
@@ -980,7 +1092,20 @@ export default function TacticsBoard() {
       <header
         style={{ ...S.topbar, ...(mobile ? { padding: "10px 12px" } : {}) }}
       >
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            title="시나리오 목록"
+            aria-label="시나리오 목록"
+            style={{
+              ...S.btn,
+              ...(sidebarOpen ? S.btnActive : {}),
+              padding: "6px 10px",
+              fontSize: 15,
+            }}
+          >
+            ☰
+          </button>
           <span style={{ ...S.logo, ...(mobile ? { fontSize: 16 } : {}) }}>
             ⛵ Sailing Tactics
           </span>
@@ -1074,11 +1199,30 @@ export default function TacticsBoard() {
             : {}),
         }}
       >
+        {/* 좌측 시나리오 패널 (저장/불러오기/삭제 · 주제별 그룹) */}
+        <ScenarioSidebar
+          scenarios={scenarios}
+          currentId={scenarioId}
+          open={sidebarOpen}
+          mobile={mobile}
+          isNative={nativeApp}
+          storagePath={storagePath}
+          onClose={() => setSidebarOpen(false)}
+          onOpenScenario={openScenario}
+          onCreate={createScenario}
+          onRename={renameScenario}
+          onSetGroup={setScenarioGroup}
+          onDuplicate={duplicateScenario}
+          onDelete={deleteScenarioById}
+          onExport={exportById}
+          onImport={handleImport}
+        />
+
         {/* 보드 */}
         <div
           style={{
             ...S.boardWrap,
-            ...(mobile ? { flexShrink: 0, padding: 10, gap: 8 } : {}),
+            ...(mobile ? { flex: "0 0 auto", padding: 10, gap: 8 } : {}),
           }}
         >
           <div

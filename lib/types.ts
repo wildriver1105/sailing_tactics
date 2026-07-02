@@ -52,6 +52,8 @@ export interface Scenario {
   name: string;
   /** 한 줄 설명 */
   blurb: string;
+  /** 주제별 그룹(폴더). 미지정 시 "그룹 없음"으로 묶임 */
+  group?: string;
   entities: Entity[];
   frames: Frame[];
 }
