@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sailing Tactics Lesson Editor"
+  short_description: "AI로 세일링 전술 강의 시나리오를 제작합니다"
+  default_prompt: "Use $sailing-tactics-lesson-editor to create a sailing tactics lesson for this project."

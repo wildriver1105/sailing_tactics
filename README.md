@@ -46,6 +46,26 @@ npm run tauri:ios:build                          # .ipa (실기기는 Apple Deve
 
 ## 사용법
 
+### AI 에이전트로 강의 만들기
+
+프로젝트 전용 스킬
+[`skills/sailing-tactics-lesson-editor/SKILL.md`](skills/sailing-tactics-lesson-editor/SKILL.md)
+을 에이전트에 연결하면, 자연어 요청으로 프레임형 택틱스 강의를 만들 수 있습니다.
+
+예: `sailing-tactics-lesson-editor 스킬을 사용해 헤더에서 태킹하는 4프레임 초급 강의를 만들어줘.`
+
+에이전트는 시나리오 JSON을 작성한 뒤 아래 API 명령으로 검증·설치합니다.
+
+```bash
+npm run lesson:validate -- /absolute/path/to/lesson.json
+npm run lesson:add -- /absolute/path/to/lesson.json
+npm run build
+```
+
+설치된 강의는 `content/scenarios/ai-lessons.json`에 upsert되며 앱의 강의 목록에
+자동으로 나타납니다. 스키마·좌표·상속 규칙은 스킬의
+`references/project-api.md`에 정리되어 있습니다.
+
 ### 발표(프레젠트) 모드
 - **보드 클릭** 또는 **다음/이전** 버튼, 키보드 **→ / ← / Space** 로 장면 이동
 - 하단 **필름스트립(1·2·3…)** 으로 특정 장면 바로 이동

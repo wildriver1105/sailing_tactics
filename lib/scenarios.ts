@@ -1,4 +1,5 @@
 import { Scenario } from "./types";
+import generatedLessons from "@/content/scenarios/ai-lessons.json";
 
 /**
  * 좌표계: x(0=좌, 100=우), y(0=위/풍상, 100=아래/풍하).
@@ -12,7 +13,7 @@ const HERO = "#ffd54a"; // 우리 보트 (노란 분필)
 const RIVAL = "#7fd1ff"; // 경쟁 보트 (파란 분필)
 const RIVAL2 = "#ff9a8b"; // 경쟁 보트 2
 
-export const SCENARIOS: Scenario[] = [
+const BUILT_IN_SCENARIOS: Scenario[] = [
   // ──────────────────────────────────────────────────────────────
   {
     id: "start",
@@ -211,6 +212,12 @@ export const SCENARIOS: Scenario[] = [
       },
     ],
   },
+];
+
+/** AI 에이전트가 생성·검증한 강의를 기본 강의와 함께 노출한다. */
+export const SCENARIOS: Scenario[] = [
+  ...BUILT_IN_SCENARIOS,
+  ...(generatedLessons as Scenario[]),
 ];
 
 export function getScenario(id: string): Scenario {

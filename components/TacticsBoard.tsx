@@ -215,7 +215,7 @@ export default function TacticsBoard() {
   }, [scenarios, loaded, flushSave]);
 
   // ── 보드 크기 측정 ───────────────────────────────────────
-  const boardRef = useRef<HTMLDivElement>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const roRef = useRef<ResizeObserver | null>(null);
   // 콜백 ref: 보드가 마운트되는 정확한 시점에 측정 + ResizeObserver 부착
